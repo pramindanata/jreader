@@ -63,6 +63,28 @@ func TestRead_FileNotFound(t *testing.T) {
 	require.ErrorIs(t, fileReader.Read(path, &got), os.ErrNotExist)
 }
 
+func TestRead_RejectsNonPointerTarget(t *testing.T) {
+	path := writeTempJSON(t, "non-pointer.json", `{"name":"Alice","age":30}`)
+
+	fileReader := newFileReader(t)
+
+	require.Error(t, fileReader.Read(path, testData{}))
+}
+
+func TestRead_ReReadsWhenTargetTypeChanges(t *testing.T) {
+	path := writeTempJSON(t, "target-type.json", `{"name":"Alice","age":30}`)
+
+	fileReader := newFileReader(t)
+
+	var asStruct testData
+	require.NoError(t, fileReader.Read(path, &asStruct))
+	assert.Equal(t, "Alice", asStruct.Name)
+
+	var asMap map[string]any
+	require.NoError(t, fileReader.Read(path, &asMap))
+	assert.Equal(t, "Alice", asMap["name"])
+}
+
 func TestRead_CachesFileContents(t *testing.T) {
 	path := writeTempJSON(t, "cached.json", `{"name":"Alice","age":30}`)
 

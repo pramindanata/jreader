@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sync"
 
 	"github.com/fsnotify/fsnotify"
@@ -17,7 +18,7 @@ type Logger interface {
 
 type Read struct {
 	mu             sync.RWMutex
-	cacheMap       map[string]json.RawMessage
+	cacheMap       map[string]any
 	watchedPathMap map[string]struct{}
 	watcher        *fsnotify.Watcher
 	logger         Logger
@@ -31,7 +32,7 @@ func New(logger Logger) (*Read, error) {
 	}
 
 	return &Read{
-		cacheMap:       make(map[string]json.RawMessage),
+		cacheMap:       make(map[string]any),
 		watchedPathMap: make(map[string]struct{}),
 		watcher:        watcher,
 		logger:         logger,
@@ -55,51 +56,64 @@ func (r *Read) Close() error {
 }
 
 func (r *Read) Read(path string, value any) error {
-	data, err := r.load(path)
+	target := reflect.ValueOf(value)
 
-	if err != nil {
-		return err
+	if target.Kind() != reflect.Pointer || target.IsNil() {
+		return fmt.Errorf("value must be a non-nil pointer, got %T", value)
 	}
 
-	return json.Unmarshal(data, value)
-}
-
-func (r *Read) load(path string) (json.RawMessage, error) {
 	key := filepath.Clean(path)
 
-	if data, ok := r.getCacheByKey(key); ok {
-		return data, nil
+	if cached, ok := r.getCacheByKey(key); ok {
+		cachedValue := reflect.ValueOf(cached)
+
+		if cachedValue.Type() == target.Type() {
+			target.Elem().Set(cachedValue.Elem())
+
+			return nil
+		}
 	}
 
 	data, err := os.ReadFile(key)
 
 	if err != nil {
-		return nil, fmt.Errorf("failed to read file: %w", err)
+		return fmt.Errorf("failed to read file: %w", err)
 	}
 
 	if err := r.watchDir(filepath.Dir(key)); err != nil {
-		return nil, err
+		return err
 	}
 
-	r.mu.Lock()
+	holder := reflect.New(target.Type().Elem())
 
-	if r.cacheMap == nil {
-		r.cacheMap = make(map[string]json.RawMessage)
+	if err := json.Unmarshal(data, holder.Interface()); err != nil {
+		return err
 	}
 
-	r.cacheMap[key] = data
-	r.mu.Unlock()
+	r.setCacheByKey(key, holder.Interface())
+	target.Elem().Set(holder.Elem())
 
-	return data, nil
+	return nil
 }
 
-func (r *Read) getCacheByKey(key string) (json.RawMessage, bool) {
+func (r *Read) getCacheByKey(key string) (any, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
-	data, ok := r.cacheMap[key]
+	value, ok := r.cacheMap[key]
 
-	return data, ok
+	return value, ok
+}
+
+func (r *Read) setCacheByKey(key string, value any) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	if r.cacheMap == nil {
+		r.cacheMap = make(map[string]any)
+	}
+
+	r.cacheMap[key] = value
 }
 
 func (r *Read) watchDir(dir string) error {
