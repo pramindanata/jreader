@@ -8,7 +8,7 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/pramindanata/fread"
+	"github.com/pramindanata/jreader"
 )
 
 const interval = 3 * time.Second
@@ -25,7 +25,7 @@ type payload struct {
 
 func main() {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
-	fileReader, err := fread.New(logger)
+	fileReader, err := jreader.New(logger)
 
 	if err != nil {
 		logger.Error("failed to create reader", "error", err)
@@ -56,7 +56,7 @@ func main() {
 	}
 }
 
-func printContents(fileReader *fread.Read) {
+func printContents(fileReader *jreader.JReader) {
 	fmt.Println("----------------------------------------")
 
 	for _, path := range files {

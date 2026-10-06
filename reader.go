@@ -1,4 +1,4 @@
-package fread
+package jreader
 
 import (
 	"encoding/json"
@@ -11,12 +11,18 @@ import (
 	"github.com/fsnotify/fsnotify"
 )
 
+// Logger receives the notifications emitted by Read while it watches files.
 type Logger interface {
+	// Info logs an informational message, such as a detected file change.
 	Info(msg string, args ...any)
+
+	// Error logs a watcher error.
 	Error(msg string, args ...any)
 }
 
-type Read struct {
+// JReader decodes JSON files and caches the decoded value for every file path it
+// has loaded. A cache entry is dropped when its watched file changes.
+type JReader struct {
 	mu             sync.RWMutex
 	cacheMap       map[string]any
 	watchedPathMap map[string]struct{}
@@ -24,14 +30,19 @@ type Read struct {
 	logger         Logger
 }
 
-func New(logger Logger) (*Read, error) {
+// New creates a JReader together with its file watcher.
+//
+// The supplied logger may be nil, in which case watcher events and watcher
+// errors are silently discarded. Call Start to begin watching, and Close to
+// release the watcher when the JReader is no longer needed.
+func New(logger Logger) (*JReader, error) {
 	watcher, err := fsnotify.NewWatcher()
 
 	if err != nil {
 		return nil, fmt.Errorf("failed to create watcher: %w", err)
 	}
 
-	return &Read{
+	return &JReader{
 		cacheMap:       make(map[string]any),
 		watchedPathMap: make(map[string]struct{}),
 		watcher:        watcher,
@@ -39,7 +50,11 @@ func New(logger Logger) (*Read, error) {
 	}, nil
 }
 
-func (r *Read) Start() {
+// Start watches the registered directories in a background goroutine and
+// invalidates the matching cache entry whenever a watched file changes.
+//
+// Start does not block. It is a no-op when the watcher is unavailable.
+func (r *JReader) Start() {
 	if r.watcher == nil {
 		return
 	}
@@ -47,7 +62,9 @@ func (r *Read) Start() {
 	go r.watch()
 }
 
-func (r *Read) Close() error {
+// Close stops the watcher and releases its resources. It is a no-op when the
+// watcher is unavailable.
+func (r *JReader) Close() error {
 	if r.watcher == nil {
 		return nil
 	}
@@ -55,7 +72,17 @@ func (r *Read) Close() error {
 	return r.watcher.Close()
 }
 
-func (r *Read) Read(path string, value any) error {
+// Read loads the JSON file at path and decodes it into value, which must be a
+// non-nil pointer.
+//
+// The decoded value is cached per path. On a later call with the same pointer
+// type the cached value is copied into value without re-parsing the file. When
+// the target type differs from the cached type, the file is read and decoded
+// again and the cache entry is replaced.
+//
+// Read returns an error when value is not a non-nil pointer, the file cannot be
+// read, or the file content is not valid JSON.
+func (r *JReader) Read(path string, value any) error {
 	target := reflect.ValueOf(value)
 
 	if target.Kind() != reflect.Pointer || target.IsNil() {
@@ -96,7 +123,7 @@ func (r *Read) Read(path string, value any) error {
 	return nil
 }
 
-func (r *Read) getCacheByKey(key string) (any, bool) {
+func (r *JReader) getCacheByKey(key string) (any, bool) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 
@@ -105,7 +132,7 @@ func (r *Read) getCacheByKey(key string) (any, bool) {
 	return value, ok
 }
 
-func (r *Read) setCacheByKey(key string, value any) {
+func (r *JReader) setCacheByKey(key string, value any) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
@@ -116,7 +143,7 @@ func (r *Read) setCacheByKey(key string, value any) {
 	r.cacheMap[key] = value
 }
 
-func (r *Read) watchDir(dir string) error {
+func (r *JReader) watchDir(dir string) error {
 	if r.watcher == nil {
 		return nil
 	}
@@ -145,7 +172,7 @@ func (r *Read) watchDir(dir string) error {
 	return nil
 }
 
-func (r *Read) watch() {
+func (r *JReader) watch() {
 	for {
 		select {
 		case event, ok := <-r.watcher.Events:
@@ -166,7 +193,7 @@ func (r *Read) watch() {
 	}
 }
 
-func (r *Read) handleFileEvent(event fsnotify.Event) {
+func (r *JReader) handleFileEvent(event fsnotify.Event) {
 	key := filepath.Clean(event.Name)
 
 	r.mu.Lock()

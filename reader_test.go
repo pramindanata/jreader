@@ -1,4 +1,4 @@
-package fread_test
+package jreader_test
 
 import (
 	"encoding/json"
@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/pramindanata/fread"
+	"github.com/pramindanata/jreader"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,10 +17,10 @@ import (
 func TestRead_ValidJSON(t *testing.T) {
 	path := writeTempJSON(t, "valid.json", `{"name":"Alice","age":30,"roles":["admin","user"]}`)
 
-	fileReader := newFileReader(t)
+	reader := newReader(t)
 
 	var got testData
-	require.NoError(t, fileReader.Read(path, &got))
+	require.NoError(t, reader.Read(path, &got))
 
 	want := testData{Name: "Alice", Age: 30, Roles: []string{"admin", "user"}}
 	assert.Equal(t, want, got)
@@ -29,10 +29,10 @@ func TestRead_ValidJSON(t *testing.T) {
 func TestRead_IntoMap(t *testing.T) {
 	path := writeTempJSON(t, "map.json", `{"key":"value","count":42}`)
 
-	fileReader := newFileReader(t)
+	reader := newReader(t)
 
 	var got map[string]any
-	require.NoError(t, fileReader.Read(path, &got))
+	require.NoError(t, reader.Read(path, &got))
 
 	assert.Equal(t, "value", got["key"])
 	assert.Equal(t, float64(42), got["count"])
@@ -41,10 +41,10 @@ func TestRead_IntoMap(t *testing.T) {
 func TestRead_InvalidJSON(t *testing.T) {
 	path := writeTempJSON(t, "invalid.json", `{"name":`)
 
-	fileReader := newFileReader(t)
+	reader := newReader(t)
 
 	var got testData
-	err := fileReader.Read(path, &got)
+	err := reader.Read(path, &got)
 
 	var syntaxErr *json.SyntaxError
 	require.Error(t, err)
@@ -57,47 +57,47 @@ func TestRead_FileNotFound(t *testing.T) {
 		require.ErrorIs(t, err, os.ErrNotExist)
 	}
 
-	fileReader := newFileReader(t)
+	reader := newReader(t)
 
 	var got testData
-	require.ErrorIs(t, fileReader.Read(path, &got), os.ErrNotExist)
+	require.ErrorIs(t, reader.Read(path, &got), os.ErrNotExist)
 }
 
 func TestRead_RejectsNonPointerTarget(t *testing.T) {
 	path := writeTempJSON(t, "non-pointer.json", `{"name":"Alice","age":30}`)
 
-	fileReader := newFileReader(t)
+	reader := newReader(t)
 
-	require.Error(t, fileReader.Read(path, testData{}))
+	require.Error(t, reader.Read(path, testData{}))
 }
 
 func TestRead_ReReadsWhenTargetTypeChanges(t *testing.T) {
 	path := writeTempJSON(t, "target-type.json", `{"name":"Alice","age":30}`)
 
-	fileReader := newFileReader(t)
+	reader := newReader(t)
 
 	var asStruct testData
-	require.NoError(t, fileReader.Read(path, &asStruct))
+	require.NoError(t, reader.Read(path, &asStruct))
 	assert.Equal(t, "Alice", asStruct.Name)
 
 	var asMap map[string]any
-	require.NoError(t, fileReader.Read(path, &asMap))
+	require.NoError(t, reader.Read(path, &asMap))
 	assert.Equal(t, "Alice", asMap["name"])
 }
 
 func TestRead_CachesFileContents(t *testing.T) {
 	path := writeTempJSON(t, "cached.json", `{"name":"Alice","age":30}`)
 
-	fileReader := newFileReader(t)
+	reader := newReader(t)
 
 	var before testData
-	require.NoError(t, fileReader.Read(path, &before))
+	require.NoError(t, reader.Read(path, &before))
 	assert.Equal(t, "Alice", before.Name)
 
 	require.NoError(t, os.WriteFile(path, []byte(`{"name":"Bob","age":31}`), 0o644))
 
 	var after testData
-	require.NoError(t, fileReader.Read(path, &after))
+	require.NoError(t, reader.Read(path, &after))
 	assert.Equal(t, "Alice", after.Name, "expected cached value when watcher is not started")
 }
 
@@ -105,17 +105,17 @@ func TestRead_InvalidatesCacheOnChange(t *testing.T) {
 	path := writeTempJSON(t, "changing.json", `{"name":"Alice","age":30}`)
 
 	logger := &testLogger{}
-	fileReader, err := fread.New(logger)
+	reader, err := jreader.New(logger)
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		require.NoError(t, fileReader.Close())
+		require.NoError(t, reader.Close())
 	})
 
-	fileReader.Start()
+	reader.Start()
 
 	var before testData
-	require.NoError(t, fileReader.Read(path, &before))
+	require.NoError(t, reader.Read(path, &before))
 	assert.Equal(t, "Alice", before.Name)
 
 	require.NoError(t, os.WriteFile(path, []byte(`{"name":"Bob","age":31}`), 0o644))
@@ -125,7 +125,7 @@ func TestRead_InvalidatesCacheOnChange(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond, "expected a file changed log entry")
 
 	var after testData
-	require.NoError(t, fileReader.Read(path, &after))
+	require.NoError(t, reader.Read(path, &after))
 	assert.Equal(t, "Bob", after.Name, "expected cache to be invalidated after file change")
 }
 
@@ -162,17 +162,17 @@ func (l *testLogger) count() int {
 	return len(l.infos)
 }
 
-func newFileReader(t *testing.T) *fread.Read {
+func newReader(t *testing.T) *jreader.JReader {
 	t.Helper()
 
-	fileReader, err := fread.New(&testLogger{})
+	reader, err := jreader.New(&testLogger{})
 	require.NoError(t, err)
 
 	t.Cleanup(func() {
-		require.NoError(t, fileReader.Close())
+		require.NoError(t, reader.Close())
 	})
 
-	return fileReader
+	return reader
 }
 
 func writeTempJSON(t *testing.T, name, content string) string {
