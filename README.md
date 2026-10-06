@@ -105,3 +105,6 @@ go test ./...
 ```
 
 Tests live in `read_test.go` and use [testify](https://github.com/stretchr/testify).
+## License
+
+[MIT](./LICENSE)
