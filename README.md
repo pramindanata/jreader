@@ -96,6 +96,26 @@ type Logger interface {
 - **Directories are watched, not files.** `Read` adds the file's parent directory to the watcher, which is what makes atomic saves detectable.
 - **Duplicate events.** Editors commonly emit more than one filesystem event per save, and each one logs a `file changed` line. Invalidation itself is idempotent.
 
+## Benchmarks
+
+`reader_test.go` includes `BenchmarkRead`, which compares a plain `os.ReadFile` + `json.Unmarshal` against a warm `JReader` cache hit, both reading the same generated 5,000 item fixture (~387 KB):
+
+| Benchmark | ns/op | B/op | allocs/op |
+| --- | --- | --- | --- |
+| `BenchmarkRead/PlainReadFileAndUnmarshal` | ~6.5 ms | 2.18 MB | 35,030 |
+| `BenchmarkRead/JReaderCached` | ~133 ns | 48 B | 2 |
+
+Median of 5 runs on Linux/amd64 (Intel Core Ultra 5 125H): roughly **50,000x faster** on a cache hit. Reproduce with:
+
+```sh
+go test -run '^$' -bench . -benchmem ./...
+```
+
+Two caveats:
+
+- The cached case is a **cache hit**. A cold read, the first call, or any call after the file changes does the same read and parse as the baseline, plus one `reflect.New`.
+- The gap comes from skipping the read, the parse, and almost all of the allocation: a hit is a shallow value copy, so the decoded slice is shared with the cache instead of rebuilt. The ratio grows with payload size, so a small config file will show a far smaller difference.
+
 ## Development
 
 ```sh
@@ -105,3 +125,7 @@ go test ./...
 ```
 
 Tests live in `read_test.go` and use [testify](https://github.com/stretchr/testify).
+
+## License
+
+[MIT](./LICENSE)

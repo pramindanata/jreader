@@ -162,7 +162,7 @@ func (l *testLogger) count() int {
 	return len(l.infos)
 }
 
-func newReader(t *testing.T) *jreader.JReader {
+func newReader(t testing.TB) *jreader.JReader {
 	t.Helper()
 
 	reader, err := jreader.New(&testLogger{})
@@ -175,7 +175,7 @@ func newReader(t *testing.T) *jreader.JReader {
 	return reader
 }
 
-func writeTempJSON(t *testing.T, name, content string) string {
+func writeTempJSON(t testing.TB, name, content string) string {
 	t.Helper()
 
 	path := filepath.Join("temp", name)
@@ -186,4 +186,79 @@ func writeTempJSON(t *testing.T, name, content string) string {
 	})
 
 	return path
+}
+
+func BenchmarkRead(b *testing.B) {
+	path := writeTempJSON(b, "bench.json", string(createBenchJSON(b)))
+
+	b.Run("PlainReadFileAndUnmarshal", func(b *testing.B) {
+		b.ReportAllocs()
+
+		for b.Loop() {
+			data, err := os.ReadFile(path)
+			if err != nil {
+				b.Fatal(err)
+			}
+
+			var got benchPayload
+			if err := json.Unmarshal(data, &got); err != nil {
+				b.Fatal(err)
+			}
+
+			benchSink = got
+		}
+	})
+
+	b.Run("JReaderCached", func(b *testing.B) {
+		reader := newReader(b)
+
+		var warm benchPayload
+		require.NoError(b, reader.Read(path, &warm))
+
+		b.ReportAllocs()
+
+		for b.Loop() {
+			var got benchPayload
+			if err := reader.Read(path, &got); err != nil {
+				b.Fatal(err)
+			}
+
+			benchSink = got
+		}
+	})
+}
+
+const benchItemCount = 5000
+
+type benchItem struct {
+	ID    int      `json:"id"`
+	Name  string   `json:"name"`
+	Tags  []string `json:"tags"`
+	Value float64  `json:"value"`
+}
+
+type benchPayload struct {
+	Items []benchItem `json:"items"`
+}
+
+var benchSink any
+
+func createBenchJSON(tb testing.TB) []byte {
+	tb.Helper()
+
+	items := make([]benchItem, benchItemCount)
+
+	for i := range items {
+		items[i] = benchItem{
+			ID:    i,
+			Name:  fmt.Sprintf("item-%d", i),
+			Tags:  []string{"alpha", "beta", "gamma"},
+			Value: float64(i) * 1.5,
+		}
+	}
+
+	data, err := json.Marshal(benchPayload{Items: items})
+	require.NoError(tb, err)
+
+	return data
 }
